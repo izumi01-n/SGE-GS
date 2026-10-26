@@ -37,12 +37,11 @@ namespace CudaRasterizer
 		float2* means2D;
 		float* cov3D;
 		float4* conic_opacity;
-        
-        // --- 建议将新增项放在此处，保持与 fromChunk 分配顺序一致 ---
+
         float4* conic_opacity_raw; 
         float* normals;            
         
-        float* colors; // 将 rgb 改名为 colors，对齐顶层命名
+        float* colors;
 		uint32_t* point_offsets;
 		uint32_t* tiles_touched;
 
@@ -54,8 +53,6 @@ namespace CudaRasterizer
 		uint2* ranges;
 		uint32_t* n_contrib;
 		float* accum_alpha;
-        // 在 struct ImageState 内部添加：
-
 		static ImageState fromChunk(char*& chunk, size_t N);
 	};
 
@@ -67,7 +64,6 @@ namespace CudaRasterizer
 		uint32_t* point_list_unsorted;
 		uint32_t* point_list;
 		char* list_sorting_space;
-
 		static BinningState fromChunk(char*& chunk, size_t P);
 	};
 

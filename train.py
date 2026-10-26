@@ -9,7 +9,6 @@ from argparse import ArgumentParser, Namespace
 import torch.nn.functional as F
 import torchvision
 
-# 核心组件导入
 from utils.loss_utils import l1_loss, ssim
 from utils.graphics_utils import check_geometric_consistency, surface_normal_from_depth, get_intrinsic_matrix, depth_propagation
 from gaussian_renderer import render, network_gui
@@ -28,8 +27,7 @@ except ImportError:
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    
-    # 1. 初始化模型与场景
+
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
@@ -45,25 +43,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
-    # 获取相机列表
     trainCameras = scene.getTrainCameras().copy()
     testCameras = scene.getTestCameras().copy()
 
-    # 高分辨率偏置采样索引
     highresolution_index = []
     for index, camera in enumerate(trainCameras):
         if camera.image_width >= 800:
             highresolution_index.append(index)
 
-    # --- Mip-Splatting 初始化 ---
     if gaussians.get_xyz.shape[0] > 0:
         print(f"[Init] Computing initial 3D filter for {gaussians.get_xyz.shape[0]} points...")
         gaussians.compute_3D_filter(cameras=trainCameras)
-        #消融1gaussians.filter_3D.zero_()
     else:
         gaussians.filter_3D = torch.ones((1, 1), device="cuda") * dataset.kernel_size
 
-    # --- GaussianPro 初始化 ---
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
@@ -83,23 +76,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
-        # 2. 采样相机
         if not viewpoint_stack:
             viewpoint_stack = trainCameras.copy()
             
         randidx = randint(0, len(trainCameras) - 1)
-        # 高分辨率偏置采样逻辑实现
+
         if random.random() < 0.3 and len(highresolution_index) > 0:
             randidx = highresolution_index[randint(0, len(highresolution_index)-1)]
             
         viewpoint_cam = trainCameras[randidx]
         gt_image = viewpoint_cam.original_image.cuda()
 
-        # ==============================================================================
-        # GaussianPro MVS Propagation Module（几何校验模块）
-        # ==============================================================================
+        # Multi-view geometric propagation.
         with torch.no_grad():
-            # 安全读取命令行传入的生命周期参数
             mvs_begin = getattr(opt, "propagated_iteration_begin", 0)
             mvs_end = getattr(opt, "propagated_iteration_after", 15000)
             mvs_interval = getattr(opt, "propagation_interval", 100) 
@@ -109,7 +98,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if is_mvs_iter:
                 dataset_type = getattr(opt, "dataset", "free")
                 src_idxs = []
-                # --- 1. 邻居视图选择 ---
                 try:
                     cam_centers = torch.stack([cam.camera_center.detach() for cam in viewpoint_stack])
                     current_center = viewpoint_cam.camera_center.detach()
@@ -118,9 +106,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     
                     for idx in closest_idxs:
                         idx_item = idx.item()
-                        if idx_item != randidx:  # 排除当前相机
+                        if idx_item != randidx:
                             src_idxs.append(idx_item)
-                        if len(src_idxs) >= 4:   # 4个最近邻视角
+                        if len(src_idxs) >= 4:
                             break
                 except Exception as e:
                     print(f"[Warning] 空间邻居搜索失败: {e}。降级使用默认索引间隔。")
@@ -130,8 +118,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         target = randidx + itv
                         if 0 <= target < len(viewpoint_stack) and target != randidx:
                             src_idxs.append(target)
-              
-                # --- 2. 深度/法线传播 ---
+
                 if len(src_idxs) > 0:
                     if not hasattr(viewpoint_cam, "K"):
                         viewpoint_cam.K = get_intrinsic_matrix(viewpoint_cam).cuda()
@@ -154,7 +141,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     except Exception as e:
                         raise e
 
-                    # --- 3. 法线坐标系处理与挂载 ---
                     H, W = viewpoint_cam.image_height, viewpoint_cam.image_width
                     if prop_normal.dim() == 3:
                         if prop_normal.shape[-1] == 3:
@@ -178,7 +164,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     viewpoint_cam.normal = prop_normal_cam.detach()
                     viewpoint_cam.depth = prop_depth.detach()
 
-                    # --- 4. 几何一致性校验（重投影验证） ---
+                    # Validate propagated depth through multi-view reprojection.
                     geometric_counts = None
                     for src_idx in src_idxs:
                         src_view = viewpoint_stack[src_idx]
@@ -204,7 +190,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         )
                         geometric_counts = mask.to(torch.uint8) if geometric_counts is None else geometric_counts + mask.to(torch.uint8)
 
-                    # --- 5. 显式加密渲染 ---
                     if geometric_counts is not None:
                         cost_mask = (geometric_counts.squeeze() >= 2) 
                         render_depth = render_pkg_pre["render_depth"].squeeze()
@@ -243,7 +228,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 #                                torchvision.utils.save_image(vis_normal, f"{scene.model_path}/debug_normals/{iteration}_mvs.png")
                               
 
-        # subpixel jitter
         if dataset.ray_jitter:
             subpixel_offset = torch.rand(
                 (int(viewpoint_cam.image_height), int(viewpoint_cam.image_width), 2),
@@ -256,7 +240,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if dataset.resample_gt_image and subpixel_offset is not None:
             gt_image = create_offset_gt(gt_image, subpixel_offset)
 
-        # --- 【核心渲染：Mip-Splatting 模式】 ---
         render_pkg = render(
             viewpoint_cam, 
             gaussians, 
@@ -269,45 +252,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             subpixel_offset=subpixel_offset
         )
 
-#        if iteration >= 7000 and iteration % 1000 == 0:
-#            if hasattr(viewpoint_cam, 'normal') and viewpoint_cam.normal is not None:
-#                os.makedirs(os.path.join(args.model_path, "normal_vis"), exist_ok=True)
-#                save_normal_comparison(
-#                    iteration,
-#                    render_pkg["render_normal"], 
-#                    viewpoint_cam.normal,        
-#                    torch.ones_like(render_pkg["render_depth"]), # 意见2：修改键名
-#                    os.path.join(args.model_path, "normal_vis")
-#                )
-#            else:
-#                print(f"--- [Warning] Iter {iteration}: viewpoint_cam has NO normal! ---")
+
 
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         depth, alpha = render_pkg["render_depth"], render_pkg["render_opacity"]
 
-        # ===============================
-        # 全局动态权重与空间纹理感知 (Spatial Texture Decoupling)
-        # ===============================
+        # Compute the spatial texture weights and iteration-dependent schedule.
         total_iters = getattr(opt, 'iterations', 30000)
-        # 时间退火：4000步后开始缓慢降低几何约束，最低降至 20%
         time_progress = max(0.0, min(1.0, (iteration - 4000) / (total_iters - 4000)))
         time_decay_factor = 1.0 - 0.8 * time_progress 
-        #time_decay_factor = 1.0 #消融5关闭时间退火
 
-        # 空间掩码：利用真实图像计算纹理复杂度，平整区域权重趋近1，纹理区域趋近0
         with torch.no_grad():
             dx = torch.abs(gt_image[:, :, 1:] - gt_image[:, :, :-1]).mean(dim=0)
             dy = torch.abs(gt_image[:, 1:, :] - gt_image[:, :-1, :]).mean(dim=0)
             dx = torch.nn.functional.pad(dx, (0, 1, 0, 0))
             dy = torch.nn.functional.pad(dy, (0, 0, 0, 1))
             texture_intensity = dx + dy
-            spatial_weight = torch.exp(-10.0 * texture_intensity) # 形状 [H, W]
-            #spatial_weight = torch.ones_like(texture_intensity) #消融4：w/o Spatial Texture Mask
+            spatial_weight = torch.exp(-10.0 * texture_intensity)
 
-        # ===============================
-        # 1. Opacity Mask（动态调度）
-        # ===============================
-        threshold = 0.02 + 0.18 * (time_progress ** 2) # 复用 time_progress
+
+        threshold = 0.02 + 0.18 * (time_progress ** 2)
         opacity_mask = alpha > threshold
         opacity_mask = opacity_mask.repeat(3, 1, 1)
 
@@ -318,9 +282,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if valid_mask.float().mean() < min_valid_ratio:
             valid_mask = finite_mask 
 
-        # ===============================
-        # 2. RGB Loss
-        # ===============================
+
         Ll1 = l1_loss(image[valid_mask], gt_image[valid_mask])
         try:
             ssim_val = ssim(image, gt_image, mask=valid_mask)
@@ -331,9 +293,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_val)
 
-        # ===============================
-        # 3. Flatten Loss（叠加时间退火）
-        # ===============================
+
         if getattr(opt, 'flatten_loss', False):
             scales = gaussians.get_scaling
             min_scale, _ = torch.min(scales, dim=1)
@@ -343,9 +303,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 current_lambda_flatten = opt.lambda_flatten * time_decay_factor
                 loss += current_lambda_flatten * flatten_loss
 
-        # ===============================
-        # 4. Sparse Loss
-        # ===============================
+
         if getattr(opt, 'sparse_loss', False) and iteration > 2000:
             sparse_progress = min(1.0, (iteration - 2000) / 5000)
             opacity = gaussians.get_opacity.clamp(1e-6, 1 - 1e-6)
@@ -358,9 +316,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if torch.isfinite(sparse_loss):
                     loss += sparse_progress * opt.lambda_sparse * sparse_loss
 
-        # ===============================
-        # 5. Normal + Depth Loss（叠加时间退火与空间纹理掩码）
-        # ===============================
+        # Apply texture-aware normal and depth supervision.
         if getattr(opt, 'normal_loss', False) and iteration > opt.normal_iter_start:
             if hasattr(viewpoint_cam, 'normal') and viewpoint_cam.normal is not None:
                 rendered_normal = torch.nan_to_num(render_pkg['render_normal'], nan=0.0)
@@ -378,11 +334,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     n = F.normalize(rendered_normal.permute(1, 2, 0).reshape(-1, 3), dim=1)
                     n_gt = F.normalize(normal_gt.permute(1, 2, 0).reshape(-1, 3), dim=1)
 
-                    # 基础相似度损失 + 空间掩码降权（纹理区免疫 MVS 压迫）
                     loss_normal_raw = 1.0 - (n * n_gt).sum(dim=1)
                     loss_normal = (loss_normal_raw * mask_flat * spatial_weight_flat).mean()
 
-                    # 基础深度损失
                     if mask.dim() == 3:
                         _mask = mask[0, :, :].to(torch.bool)  
                     elif mask.dim() == 4:
@@ -393,11 +347,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     _rendered_depth = rendered_depth.squeeze()
                     _depth_gt = depth_gt.squeeze()
 
-                    # 对深度损失施加空间掩码
                     loss_depth_raw = torch.abs(_rendered_depth[_mask] - _depth_gt[_mask])
                     loss_depth = (loss_depth_raw * spatial_weight[_mask]).mean()
 
-                    # 最终权重 = 预热系数(w) * 时间退火衰减(time_decay_factor) * 基础权重
+
                     w = min(1.0, (iteration - opt.normal_iter_start) / 5000.0) 
                     current_lambda_normal = getattr(opt, 'lambda_l1_normal', 0.05) * time_decay_factor
                     current_lambda_depth = getattr(opt, 'lambda_depth', 0.1) * time_decay_factor
@@ -405,15 +358,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     loss += w * current_lambda_normal * loss_normal
                     loss += w * current_lambda_depth * loss_depth
 
-        # ===============================
-        # 6. NaN 防御退出机制
-        # ===============================
+
         if not torch.isfinite(loss):
-            print(f"⚠️ Skip iteration {iteration} due to NaN loss")
+            print(f"Skip iteration {iteration} due to NaN loss")
             gaussians.optimizer.zero_grad(set_to_none=True)
             continue
 
-        # 4. 反向传播
         loss.backward()
         iter_end.record()
         
@@ -421,16 +371,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if not hasattr(opt, "initial_point_count"):
             opt.initial_point_count = num_points
 
-        # 5. 后处理与 Densification
         with torch.no_grad():
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             prev_loss = ema_loss_for_log
             if iteration % 10 == 0:
                 progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.5f}", "Pts": f"{gaussians.get_xyz.shape[0]}"})
                 progress_bar.update(10)
-
-#            if iteration % 500 == 0:
-#                visualize_training_step(iteration, viewpoint_cam, image, depth, gaussians, pipe, background, dataset, dataset.model_path)
 
             if iteration < opt.densify_until_iter:
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
@@ -446,10 +392,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     gaussians.reset_opacity()
                     densify_happened = True
                     
-            # 【Mip-Splatting 同步核心】
+
             if densify_happened or iteration % getattr(opt, "filter_update_interval", 500) == 0:
                 gaussians.compute_3D_filter(cameras=trainCameras)
-                #消融1gaussians.filter_3D.zero_()
                 
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
@@ -485,8 +430,7 @@ def visualize_training_step(iteration, cam, image, depth, gaussians, pipe, backg
     
     rgb = torch.clamp(image, 0.0, 1.0).cpu()
     depth_vis = visualize_depth(depth).cpu()
-    
-    # 意见1：修改参数名
+
     norm_pkg = render(
         cam, gaussians, pipe, background, kernel_size=dataset.kernel_size, 
         return_normal=True, return_opacity=True, return_depth=True
@@ -567,13 +511,6 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     depth_vis = depth / (depth.max() + 1e-5)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
 
-#                    if tb_writer and (idx < 5):
-#                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
-#                        tb_writer.add_images(config['name'] + "_view_{}/depth".format(viewpoint.image_name), depth_vis[None], global_step=iteration)
-#                        tb_writer.add_images(config['name'] + "_view_{}/alpha".format(viewpoint.image_name), alpha[None], global_step=iteration)
-#
-#                        if iteration == testing_iterations[0]:
-#                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
 
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()

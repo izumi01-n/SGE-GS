@@ -1,9 +1,3 @@
-/*
- * Copyright (C) 2023, Inria
- * GRAPHDECO research group, https://team.inria.fr/graphdeco
- * All rights reserved.
- */
-
 #include "forward.h"
 #include "auxiliary.h"
 #include <cooperative_groups.h>
@@ -13,7 +7,7 @@ namespace cg = cooperative_groups;
 
 namespace FORWARD 
 {
-// 计算 SH 颜色
+// Evaluate view-dependent color from spherical-harmonic coefficients.
 __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, bool* clamped)
 {
     glm::vec3 pos = means[idx];
@@ -59,7 +53,7 @@ __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const 
     return glm::max(result, 0.0f);
 }
 
-// [重构] 计算原始 2D 协方差 (不加 kernel_size)
+// Project the unfiltered covariance for geometry-related rasterization.
 __device__ float3 computeCov2DBase(const float3& mean, float focal_x, float focal_y, float tan_fovx, float tan_fovy, const float* cov3D, const float* viewmatrix)
 {
     float3 t = transformPoint4x3(mean, viewmatrix);
@@ -88,11 +82,11 @@ __device__ float3 computeCov2DBase(const float3& mean, float focal_x, float foca
 
     glm::mat3 cov = glm::transpose(T) * glm::transpose(Vrk) * T;
     
-    // 只返回上三角矩阵元素
+    // Return the symmetric 2D covariance in compact form.
     return { float(cov[0][0]), float(cov[0][1]), float(cov[1][1]) };
 }
 
-// 计算 3D 协方差
+// Construct the 3D covariance from Gaussian scale and rotation.
 __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 rot, float* cov3D)
 {
     glm::mat3 S = glm::mat3(1.0f);
@@ -138,20 +132,18 @@ __global__ void preprocessCUDA(int P, int D, int M,
     float p_w = 1.0f / (p_hom.w + 0.0000001f);
     float3 p_proj = { p_hom.x * p_w, p_hom.y * p_w, p_hom.z * p_w };
 
-    // --- [新增核心：解耦的 GaussianPro 法线提取] ---
+    // Estimate a geometric normal from the Gaussian’s shortest principal axis, independent of the Mip filter.
     if (normals != nullptr) {
         glm::vec3 scale = scales[idx];
         glm::vec4 q = rotations[idx];
         float r = q.x, x = q.y, y = q.z, z = q.w;
 
-        // 1. 恢复纯净的旋转矩阵 (完全不受 Mip 滤波器干扰)
         glm::mat3 R = glm::mat3(
             1.f - 2.f * (y * y + z * z), 2.f * (x * y - r * z), 2.f * (x * z + r * y),
             2.f * (x * y + r * z), 1.f - 2.f * (x * x + z * z), 2.f * (y * z - r * x),
             2.f * (x * z - r * y), 2.f * (y * z + r * x), 1.f - 2.f * (x * x + y * y)
         );
 
-        // 2. 寻找最短轴 (即法线方向)
         int min_idx = 0;
         if (scale.y < scale.x) {
             min_idx = 1;
@@ -161,7 +153,6 @@ __global__ void preprocessCUDA(int P, int D, int M,
         }
         glm::vec3 local_normal = glm::vec3(R[0][min_idx], R[1][min_idx], R[2][min_idx]);
 
-        // 3. 将局部法线转换到相机坐标系 (View Space)
         glm::mat3 W_mat = glm::mat3(
             viewmatrix[0], viewmatrix[4], viewmatrix[8],
             viewmatrix[1], viewmatrix[5], viewmatrix[9],
@@ -169,12 +160,11 @@ __global__ void preprocessCUDA(int P, int D, int M,
         );
         glm::vec3 cam_normal = glm::normalize(W_mat * local_normal);
 
-        // 4. 写入 Buffer
         normals[idx * 3 + 0] = cam_normal.x;
         normals[idx * 3 + 1] = cam_normal.y;
         normals[idx * 3 + 2] = cam_normal.z;
     }
-    // ----------------------------------------------
+    // -------------------------->v<------------------------------
 
     const float* cov3D;
     if (cov3D_precomp != nullptr) {
@@ -184,27 +174,22 @@ __global__ void preprocessCUDA(int P, int D, int M,
         cov3D = cov3Ds + idx * 6;
     }
 
-    // --- [解耦核心逻辑] 生成两套 Conic ---
-    // 1. 获取原始的 2D 协方差矩阵 (锐利的几何)
+    // Keep filtered and unfiltered conics separate: appearance uses Mip filtering, while geometry retains the original footprint.
     float3 cov2D_raw = computeCov2DBase(p_orig, focal_x, focal_y, tan_fovx, tan_fovy, cov3D, viewmatrix);
     float det_raw = cov2D_raw.x * cov2D_raw.z - cov2D_raw.y * cov2D_raw.y;
     if (det_raw == 0.0f) return;
 
-    // 2. 生成带 Mip filter 的 2D 协方差矩阵 (平滑的视觉)
     float3 cov2D_filt = { cov2D_raw.x + kernel_size, cov2D_raw.y, cov2D_raw.z + kernel_size };
     float det_filt = cov2D_filt.x * cov2D_filt.z - cov2D_filt.y * cov2D_filt.y;
 
-    // 3. 计算 Mip 补偿系数 (只作用于 RGB 分支的不透明度)
     float coef = sqrt(max(1e-6f, det_raw) / max(1e-6f, det_filt) + 1e-6f);
 
-    // 4. 计算两套协方差的逆矩阵 (Conic)
     float det_inv_raw = 1.f / det_raw;
     float3 conic_r = { cov2D_raw.z * det_inv_raw, -cov2D_raw.y * det_inv_raw, cov2D_raw.x * det_inv_raw };
 
     float det_inv_filt = 1.f / det_filt;
     float3 conic_f = { cov2D_filt.z * det_inv_filt, -cov2D_filt.y * det_inv_filt, cov2D_filt.x * det_inv_filt };
 
-    // 用范围更大的 filtered 协方差来计算包围盒半径，保证不漏掉像素
     float mid = 0.5f * (cov2D_filt.x + cov2D_filt.z);
     float lambda1 = mid + sqrt(max(0.1f, mid * mid - det_filt));
     float lambda2 = mid - sqrt(max(0.1f, mid * mid - det_filt));
@@ -225,8 +210,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
     depths[idx] = p_view.z;
     radii[idx] = my_radius;
     points_xy_image[idx] = point_image;
-    
-    // 分别存储过滤后的和原始的属性
+
     conic_opacity[idx] = { conic_f.x, conic_f.y, conic_f.z, opacities[idx] * coef };
     if (conic_opacity_raw != nullptr) {
         conic_opacity_raw[idx] = { conic_r.x, conic_r.y, conic_r.z, opacities[idx] };
@@ -292,7 +276,7 @@ renderCUDA(
     __shared__ float4 collected_conic_f[BLOCK_SIZE];
     __shared__ float4 collected_conic_r[BLOCK_SIZE];
 
-    float T = 1.0f;  //  唯一透射率
+    float T = 1.0f;  // Shared transmittance controls visibility for both output branches.
 
     uint32_t last_contributor = 0;
 
@@ -338,7 +322,7 @@ renderCUDA(
 
             if (alpha_f < 1.0f / 255.0f && alpha_r < 1.0f / 255.0f) continue;
 
-            // 单一 T 更新（用 filtered 控制可见性）
+            // Use filtered opacity for shared visibility, while accumulating depth and normals with the unfiltered footprint.
             float alpha_vis = alpha_f;
             float test_T = T * (1.0f - alpha_vis);
 
@@ -350,13 +334,11 @@ renderCUDA(
             float weight_rgb = alpha_f * T;
             float weight_geo = alpha_r * T;
 
-            // --- RGB ---
             for (int ch = 0; ch < CHANNELS; ch++) {
                 C[ch] += features[collected_id[j] * CHANNELS + ch] * weight_rgb;
             }
             weight_acc_rgb += weight_rgb;
 
-            // --- Geometry ---
             float z = depths[collected_id[j]];
             depth_acc += z * weight_geo;
             weight_acc_geo += weight_geo;
@@ -392,24 +374,14 @@ renderCUDA(
     }
 }
 
-// 外部调用包装
-// ... 之前的 renderCUDA 和 preprocessCUDA 定义保持不变 ...
-
-// -----------------------------------------------------------------------
-// 包装函数：必须严格对应 forward.h 中的声明
-// -----------------------------------------------------------------------
-
-// -----------------------------------------------------------------------
-// 包装函数：入口参数名对齐 forward.h，内部调用对齐你的 means3D/2D 逻辑
-// -----------------------------------------------------------------------
-
+// [Original excerpt placeholder: renderCUDA and preprocessCUDA definitions omitted.]
 void render(
     const dim3 grid, dim3 block, 
     const uint2* ranges, 
     const uint32_t* point_list, 
     int W, int H, 
     const float2* subpixel_offset, 
-    const float2* means2D,        // 外部接口叫 means2D (对齐 .h)
+    const float2* means2D,
     const float* colors, 
     const float4* conic_opacity, 
     const float4* conic_opacity_raw, 
@@ -423,10 +395,9 @@ void render(
     float* out_alpha, 
     float* out_normal)
 {
-    // 内部调用 renderCUDA 时，参数位置对应即可
     renderCUDA<NUM_CHANNELS> << <grid, block >> > (
         ranges, point_list, W, H, subpixel_offset, 
-        means2D, // 内部 Kernel 的 points_xy_image 位置接住这个 means2D
+        means2D,
         colors, conic_opacity, conic_opacity_raw, depths, normals, 
         final_T, n_contrib, bg_color, out_color, out_depth, out_alpha, out_normal
     );
@@ -434,7 +405,7 @@ void render(
 
 void preprocess(
     int P, int D, int M, 
-    const float* means3D,         // 外部接口叫 means3D (对齐 .h)
+    const float* means3D,
     const glm::vec3* scales, 
     const float scale_modifier, 
     const glm::vec4* rotations, 
@@ -451,7 +422,7 @@ void preprocess(
     const float focal_x, float focal_y, 
     const float kernel_size, 
     int* radii, 
-    float2* means2D,              // 外部接口叫 means2D (对齐 .h)
+    float2* means2D,
     float* depths, 
     float* cov3Ds, 
     float* colors, 
@@ -462,16 +433,15 @@ void preprocess(
     bool prefiltered, 
     float* normals)
 {
-    // 内部调用 preprocessCUDA
     preprocessCUDA<NUM_CHANNELS> << <(P + 255) / 256, 256 >> > (
         P, D, M, 
-        means3D,        // 对应 Kernel 的 orig_points
+        means3D,
         scales, scale_modifier, rotations, opacities, shs, clamped, 
         cov3D_precomp, colors_precomp, viewmatrix, projmatrix, cam_pos, 
         W, H, tan_fovx, tan_fovy, focal_x, focal_y, kernel_size, radii, 
-        means2D,        // 对应 Kernel 的 points_xy_image
+        means2D,
         depths, cov3Ds, colors, conic_opacity, conic_opacity_raw, grid, 
-        tiles_touched,  // 修正了刚才报错的类型转换问题
+        tiles_touched,
         prefiltered, normals
     );
 }

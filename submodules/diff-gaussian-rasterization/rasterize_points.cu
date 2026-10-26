@@ -33,7 +33,7 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
 }
 
 
-// 1. 确保这里是 9 个元素
+
 std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
@@ -120,15 +120,14 @@ RasterizeGaussiansCUDA(
 		debug);
   }
 
-  // 4. 返回 9 个元素的 tuple
+
   return std::make_tuple(rendered, out_color, out_depth, out_alpha, out_normal, radii, geomBuffer, binningBuffer, imgBuffer);
 }
 
 
 
-// ... 前面 forward 部分保持你现在的逻辑，已经基本正确 ...
 
-// 修正：Backward 函数签名必须包含 depth 和 normal 的梯度输入
+
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
  RasterizeGaussiansBackwardCUDA(
     const torch::Tensor& background,
@@ -146,8 +145,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     const float kernel_size,
     const torch::Tensor& subpixel_offset,
     const torch::Tensor& dL_dout_color,
-    const torch::Tensor& dL_dout_depth,  // <--- 必须加上
-    const torch::Tensor& dL_dout_normal, // <--- 必须加上
+    const torch::Tensor& dL_dout_depth,  // <---
+    const torch::Tensor& dL_dout_normal, // <---
     const torch::Tensor& sh,
     const int degree,
     const torch::Tensor& campos,
@@ -209,7 +208,6 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
      dL_dscales.contiguous().data_ptr<float>(),
      dL_drotations.contiguous().data_ptr<float>(),
      debug);
-     // 注意：如果你的底层接口支持法线梯度，也要在这里传入 dL_dout_normal.data_ptr<float>()
   }
 
   return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dsh, dL_dscales, dL_drotations);

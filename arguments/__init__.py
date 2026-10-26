@@ -69,13 +69,12 @@ class ParamGroup:
         return group
 
 
-# =========================================================
+
 # Model Parameters
-# =========================================================
 class ModelParams(ParamGroup):
     def __init__(self, parser, sentinel=False):
 
-        # ================= Basic =================
+        # Basic
         self.sh_degree = 3
 
         self._source_path = ""
@@ -94,7 +93,6 @@ class ModelParams(ParamGroup):
 
         self.eval = False
 
-        # ================= Mip-Splatting =================
         self.sample_more_highres = False
 
         # 3D Filter kernel size
@@ -112,9 +110,8 @@ class ModelParams(ParamGroup):
         return g
 
 
-# =========================================================
+
 # Pipeline Parameters
-# =========================================================
 class PipelineParams(ParamGroup):
     def __init__(self, parser):
 
@@ -126,16 +123,15 @@ class PipelineParams(ParamGroup):
         super().__init__(parser, "Pipeline Parameters")
 
 
-# =========================================================
+
 # Optimization Parameters
-# =========================================================
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
 
-        # ================= Iteration =================
+        # Iteration
         self.iterations = 30_000
 
-        # ================= Learning Rates =================
+        # Learning Rates
         self.position_lr_init = 0.00016
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01
@@ -148,9 +144,8 @@ class OptimizationParams(ParamGroup):
 
         self.percent_dense = 0.01
 
-        # =====================================================
-        # GaussianPro Geometry Losses
-        # =====================================================
+
+        # Geometry Losses
         self.normal_loss = True
         self.sparse_loss = False
         self.flatten_loss = True
@@ -168,9 +163,8 @@ class OptimizationParams(ParamGroup):
         self.lambda_depth = 0.20
         self.lambda_depth2normal = 0.05
 
-        # =====================================================
+
         # Densification
-        # =====================================================
         self.densification_interval = 100
 
         self.opacity_reset_interval = 3000
@@ -182,14 +176,12 @@ class OptimizationParams(ParamGroup):
 
         self.random_background = False
 
-        # =====================================================
+
         # Normal Loss Start
-        # =====================================================
         self.normal_iter_start = 4000
 
-        # =====================================================
+
         # GaussianPro Propagation Parameters
-        # =====================================================
         self.dataset = 'free'                  
 
         self.propagation_interval = 200        
@@ -210,9 +202,8 @@ class OptimizationParams(ParamGroup):
         super().__init__(parser, "Optimization Parameters")
 
 
-# =========================================================
+
 # Merge cfg_args + commandline
-# =========================================================
 def get_combined_args(parser: ArgumentParser):
 
     cmdlne_string = sys.argv[1:]

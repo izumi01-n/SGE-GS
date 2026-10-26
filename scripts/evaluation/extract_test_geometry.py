@@ -2,9 +2,7 @@ import os
 import sys
 import numpy as np
 
-# ==============================================================================
-# 【黑科技兼容补丁】拦截 plyfile 插件，完美兼容常规 3DGS / GaussianPro 的 PLY 文件
-# ==============================================================================
+# Handle PLY files without the optional filter_3D property.
 import plyfile
 _orig_getitem = plyfile.PlyElement.__getitem__
 def _patched_getitem(self, key):
@@ -12,13 +10,10 @@ def _patched_getitem(self, key):
         try:
             return _orig_getitem(self, key)
         except ValueError:
-            # 如果常规 3DGS/GaussianPro 的 ply 里没有 filter_3D，自动返回全 0 数组伪装，防止崩溃
+            # Return zeros when filter_3D is missing.
             return np.zeros(len(self.data), dtype=np.float32)
     return _orig_getitem(self, key)
 plyfile.PlyElement.__getitem__ = _patched_getitem
-# ==============================================================================
-
-# 必须在导入任何 3DGS 模块之前，把基准路径和子模块路径塞进 sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 sys.path.append(os.path.join(current_dir, "../../submodules"))
@@ -34,9 +29,7 @@ from gaussian_renderer import render
 from scene import GaussianModel, Scene
 
 def compute_normal_tv(normal_tensor):
-    """
-    计算法线图的总变分 (Total Variation)，反映几何的平滑度和噪声水平
-    """
+    """Compute the total variation of a rendered normal map."""
     normal_tensor = F.normalize(normal_tensor, dim=0)
     img = normal_tensor.unsqueeze(0) # [1, 3, H, W]
     tv_h = torch.pow(img[:, :, 1:, :] - img[:, :, :-1, :], 2).sum()
@@ -44,21 +37,16 @@ def compute_normal_tv(normal_tensor):
     return ((tv_h + tv_w) / img.numel()).item()
 
 def extract_geometry(dataset, pipeline, ply_path):
-    # 实例化高斯模型
     gaussians = GaussianModel(dataset.sh_degree)
-    
-    # 实例化场景
+
     scene = Scene(dataset, gaussians)
-    
-    # 加载训练好的 ply 点云模型
+
     print(f"[*] Loading trained model PLY from: {ply_path}")
     gaussians.load_ply(ply_path)
-    
-    # 准备背景颜色
+
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-    
-    # 获取测试集相机
+
     test_cameras = scene.getTestCameras()
     if len(test_cameras) == 0:
         print("[Warning] No test cameras found! Using train cameras for fallback.")
@@ -85,13 +73,11 @@ def extract_geometry(dataset, pipeline, ply_path):
             tv_val = compute_normal_tv(rendered_normal)
             tv_scores.append(tv_val)
 
-    # 输出统计数据
     avg_tv = sum(tv_scores) / len(tv_scores) if tv_scores else 0
     print("\n" + "="*50)
     print(f"测试集平均法线总变分 (Average Normal TV Metric): {avg_tv:.7f}")
     print("="*50)
 
-    # 所有结果无条件追加写入当前脚本所在目录的同一个 txt 里
     txt_path = os.path.join(current_dir, "geometry_eval_results.txt")
     
     with open(txt_path, "a", encoding="utf-8") as f:

@@ -14,20 +14,15 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
 
-# =================================================================
-# 1. 基础损失函数 (兼容 Mip-Splatting)
-# =================================================================
-
+# Basic loss functions
 def l1_loss(network_output, gt):
     return torch.abs((network_output - gt)).mean()
 
 def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
 
-# =================================================================
-# 2. SSIM 损失 (升级为支持 Mask 版本)
-# =================================================================
 
+# SSIM with optional masking
 def gaussian(window_size, sigma):
     gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
     return gauss / gauss.sum()
@@ -66,7 +61,6 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True, mask=None
     ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
 
     if mask is not None:
-        # 如果提供了 mask，只计算 mask 区域内的 SSIM
         ssim_map = ssim_map[mask]
 
     if size_average:
@@ -74,10 +68,7 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True, mask=None
     else:
         return ssim_map.mean(1).mean(1).mean(1)
 
-# =================================================================
-# 3. 几何约束工具 (来自 GaussianPro)
-# =================================================================
-
+# Masked geometric losses (based on GaussianPro)
 def reduction_batch_based(image_loss, M):
     divisor = torch.sum(M)
     if divisor == 0:
@@ -107,10 +98,8 @@ class MSELoss(torch.nn.Module):
     def forward(self, prediction, target, mask):
         return mse_loss(prediction, target, mask, reduction=self.__reduction)
 
-# =================================================================
-# 4. 深度与梯度约束 (解决鬼影的关键)
-# =================================================================
 
+# Multi-scale depth gradient loss
 def gradient_loss(prediction, target, mask, reduction=reduction_batch_based):
     M = torch.sum(mask, (1, 2))
     diff = prediction - target
@@ -144,8 +133,8 @@ class GradientLoss(torch.nn.Module):
                                    mask[:, ::step, ::step], reduction=self.__reduction)
         return total
 
-# 核心：尺度与偏移不变损失 (用于深度图对齐)
 def compute_scale_and_shift(prediction, target, mask):
+    """Compute per-image scale and shift for depth alignment."""
     a_00 = torch.sum(mask * prediction * prediction, (1, 2))
     a_01 = torch.sum(mask * prediction, (1, 2))
     a_11 = torch.sum(mask, (1, 2))

@@ -33,10 +33,8 @@ from arguments import (
 from utils.general_utils import safe_state
 
 
-# =========================================================
-# Depth Visualization
-# =========================================================
 
+# Depth Visualization
 def normalize_depth(depth):
 
     depth = depth.astype(np.float32)
@@ -78,10 +76,7 @@ def colorize_depth(depth):
     return depth_color
 
 
-# =========================================================
 # Error Map
-# =========================================================
-
 def compute_error_map(render, gt):
 
     error = np.abs(
@@ -101,10 +96,8 @@ def compute_error_map(render, gt):
     return error_vis
 
 
-# =========================================================
-# Render Set
-# =========================================================
 
+# Render Set
 def render_set(
     model_path,
     split_name,
@@ -139,10 +132,7 @@ def render_set(
         tqdm(views, desc=f"Rendering {split_name}")
     ):
 
-        # =====================================================
         # Render
-        # =====================================================
-
         outputs = render(
             view,
             gaussians,
@@ -159,10 +149,7 @@ def render_set(
 
         gt = view.original_image[0:3, :, :]
 
-        # =====================================================
         # RGB
-        # =====================================================
-
         torchvision.utils.save_image(
             rendering,
             os.path.join(
@@ -179,10 +166,7 @@ def render_set(
             )
         )
 
-        # =====================================================
         # Depth
-        # =====================================================
-
         depth_np = (
             render_depth
             .detach()
@@ -200,9 +184,7 @@ def render_set(
             depth_color
         )
 
-        # =====================================================
         # Normal
-        # =====================================================
 
         normal_vis = (
             (render_normal + 1.0)
@@ -229,9 +211,7 @@ def render_set(
             normal_vis
         )
 
-        # =====================================================
         # Error Map
-        # =====================================================
 
         render_np = (
             rendering
@@ -263,10 +243,7 @@ def render_set(
         )
 
 
-# =========================================================
 # Render All
-# =========================================================
-
 def render_sets(
     dataset,
     iteration,
@@ -332,10 +309,6 @@ def render_sets(
                 scale_factor
             )
 
-
-# =========================================================
-# Main
-# =========================================================
 
 if __name__ == "__main__":
 

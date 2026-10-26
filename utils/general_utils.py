@@ -20,10 +20,6 @@ import cv2
 import matplotlib as mpl
 import matplotlib.cm as cm
 
-# =================================================================
-# 1. 基础数学与变换 (兼容 Mip-Splatting)
-# =================================================================
-
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 
@@ -52,9 +48,6 @@ def get_expon_lr_func(
         return delay_rate * log_lerp
     return helper
 
-# =================================================================
-# 2. 高斯结构处理
-# =================================================================
 
 def strip_lowerdiag(L):
     uncertainty = torch.zeros((L.shape[0], 6), dtype=torch.float, device="cuda")
@@ -110,16 +103,11 @@ def safe_state(silent):
     if torch.cuda.is_available():
         torch.cuda.set_device(torch.device("cuda:0"))
 
-# =================================================================
-# 3. 深度图可视化与 DMB 文件读取 (来自 GaussianPro)
-# =================================================================
 
 def vis_depth(depth, minmax=None, cmap='magma_r'):
-    """
-    将深度图转换为高质量彩色可视化图
-    """
+    """Convert a depth map into a color visualization."""
     depthmap = np.nan_to_num(depth)
-    # 过滤无效深度 (通常设为 300)
+    # Exclude depth values outside the valid visualization range.
     valid_mask = depthmap < 300
     if valid_mask.sum() > 10:
         constant_max = np.percentile(depthmap[valid_mask], 99)
@@ -127,7 +115,7 @@ def vis_depth(depth, minmax=None, cmap='magma_r'):
     else:
         constant_max, constant_min = 60, 0
     
-    if minmax is not None: # 如果手动指定了范围
+    if minmax is not None: # Use the specified depth range.
         constant_min, constant_max = minmax
 
     normalizer = mpl.colors.Normalize(vmin=constant_min, vmax=constant_max)
@@ -181,7 +169,7 @@ def load_pairs_relation(path):
                 for j in range(num_src):
                     sid, score = int(src_infos[2*j+1]), float(src_infos[2*j+2])
                     if score <= 0.0 or sid % 8 == 0: continue
-                    # 注意：这里的对齐逻辑取决于你的训练/测试集切分方式
+                    # Remap image IDs after excluding every eighth image; this assumes the corresponding train/test split.
                     sid_aligned = (sid // 8) * 7 + (sid % 8) - 1
                     pairs.append(sid_aligned)
                     if len(pairs) > 3: break

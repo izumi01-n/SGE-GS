@@ -97,9 +97,8 @@ def fov2focal(fov, pixels):
 def focal2fov(focal, pixels):
     return 2*math.atan(pixels/(2*focal))
 
-# ==========================================
-# 新增：从 Camera 自动提取内参矩阵的辅助函数
-# ==========================================
+
+# Added: Helper function to extract the camera intrinsic matrix
 def get_intrinsic_matrix(camera):
     h, w = camera.image_height, camera.image_width
     fx = fov2focal(camera.FoVx, w) if not hasattr(camera, 'focal_x') else camera.focal_x
@@ -180,9 +179,8 @@ def get_surface_normalv2(xyz, patch_size=5):
 
     return n_img_aver_norm_out
 
-# ==========================================
-# 修改：增加 camera 和 world_space 支持，适应 3DGS
-# ==========================================
+
+# Add camera and world-space support for 3DGS
 def surface_normal_from_depth(depth, intrinsic, valid_mask=None):
     # para depth: depth map, [b, c, h, w]
     b, c, h, w = depth.shape

@@ -162,10 +162,9 @@ CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& ch
     obtain(chunk, geom.cov3D, P * 6, 128);
     obtain(chunk, geom.conic_opacity, P, 128);
     
-    // --- [新增显存分配：几何分支的 Conic 和 法线 Buffer] ---
+    // Buffers for unfiltered conic parameters and Gaussian normals.
     obtain(chunk, geom.conic_opacity_raw, P, 128);
     obtain(chunk, geom.normals, P * 3, 128);
-    // ----------------------------------------------------
     
     obtain(chunk, geom.colors, P * 3, 128);
     obtain(chunk, geom.tiles_touched, P, 128);
@@ -228,7 +227,7 @@ int CudaRasterizer::Rasterizer::forward(
     float* out_color,
     float* out_depth,  
     float* out_alpha,  
-    float* out_normal, // <--- [新增] 输出法线参数
+    float* out_normal,
     int* radii,
     bool debug)
 {
@@ -257,7 +256,7 @@ int CudaRasterizer::Rasterizer::forward(
         throw std::runtime_error("For non-RGB, provide precomputed Gaussian colors!");
     }
 
-    // --- [修改] 传递新增的 conic_opacity_raw 和 normals 进 preprocess ---
+    // Prepare filtered appearance parameters and unfiltered geometry data.
     CHECK_CUDA(FORWARD::preprocess(
         P, D, M,
         means3D,
@@ -281,11 +280,11 @@ int CudaRasterizer::Rasterizer::forward(
         geomState.cov3D,
         geomState.colors,
         (float4*)geomState.conic_opacity,
-        (float4*)geomState.conic_opacity_raw, // <--- [新增]
+        (float4*)geomState.conic_opacity_raw,
         tile_grid,
         geomState.tiles_touched,
         prefiltered,
-        (float*)geomState.normals            // <--- [新增]
+        (float*)geomState.normals
     ), debug)
 
     // Compute prefix sum over full list of touched tile counts by Gaussians
@@ -338,7 +337,7 @@ int CudaRasterizer::Rasterizer::forward(
     // Let each tile blend its range of Gaussians independently in parallel
     const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.colors;
     
-    // --- [修改] 传递两套 Conic、两套透射率和法线参数进 render ---
+    // Render appearance and geometric attributes using their respective conic parameters.
     CHECK_CUDA(FORWARD::render(
         tile_grid, 
         block,
@@ -349,16 +348,16 @@ int CudaRasterizer::Rasterizer::forward(
         geomState.means2D,
         feature_ptr,
         geomState.conic_opacity,
-        geomState.conic_opacity_raw, // <--- [新增] 几何分支用
+        geomState.conic_opacity_raw,
         geomState.depths,
-        geomState.normals,           // <--- [新增] 传入提取好的法线
-        imgState.accum_alpha,        // 原来的 final_T，RGB 分支用  
+        geomState.normals,
+        imgState.accum_alpha,
         imgState.n_contrib,
         background,
         out_color,
         out_depth,  
         out_alpha,   
-        out_normal                   // <--- [新增] 输出最终像素法线图
+        out_normal
     ), debug);      
 
     return num_rendered;

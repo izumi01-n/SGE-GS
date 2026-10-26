@@ -15,7 +15,7 @@
 #include <tuple>
 #include <string>
 
-// Forward: 9个返回值 (num_rendered + 8个Tensor)
+// Forward: num_rendered + 8Tensor
 std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
     const torch::Tensor& background,
@@ -40,7 +40,7 @@ RasterizeGaussiansCUDA(
     const bool prefiltered,
     const bool debug);
 
-// Backward: 必须包含 dL_dout_depth 和 dL_dout_normal 才能实现高精度反向传播
+
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
  RasterizeGaussiansBackwardCUDA(
     const torch::Tensor& background,
@@ -58,8 +58,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     const float kernel_size,
     const torch::Tensor& subpixel_offset,
     const torch::Tensor& dL_dout_color,
-    const torch::Tensor& dL_dout_depth,  // <--- 新增
-    const torch::Tensor& dL_dout_normal, // <--- 新增
+    const torch::Tensor& dL_dout_depth,  // <---
+    const torch::Tensor& dL_dout_normal, // <---
     const torch::Tensor& sh,
     const int degree,
     const torch::Tensor& campos,

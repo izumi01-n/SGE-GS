@@ -113,7 +113,7 @@ class GaussianModel:
 
     @property
     def get_normal(self):
-        # 严格依据最短轴提取法线
+        # Estimate Gaussian normals from the shortest principal axes.
         R = build_rotation(self.get_rotation)
         scales = self.get_scaling
         min_axis = torch.argmin(scales, dim=1)
@@ -121,9 +121,7 @@ class GaussianModel:
         return R[idx, :, min_axis]
 
     def get_attribute_normals(self):
-        """
-        与 forward.cu 保持 100% 绝对一致：动态提取缩放最小轴对应的法线
-        """
+        """Return normals derived from each Gaussian's shortest principal axis."""
         return self.get_normal
 
     @property
@@ -262,7 +260,7 @@ class GaussianModel:
         mkdir_p(os.path.dirname(path))
 
         xyz = self._xyz.detach().cpu().numpy()
-        # 修正：不再导出全0法线，直接写入计算出的真实最短轴法线
+        # Export normals derived from Gaussian orientations.
         normals = self.get_normal.detach().cpu().numpy() 
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
@@ -284,7 +282,6 @@ class GaussianModel:
         mkdir_p(os.path.dirname(path))
 
         xyz = self._xyz.detach().cpu().numpy()
-        # 同步修正
         normals = self.get_normal.detach().cpu().numpy()
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
@@ -464,7 +461,7 @@ class GaussianModel:
             "rotation" : new_rotation
         }
 
-        # 修正：新生成的点应当继承父节点的 filter_3D 属性，而不是暴力的赋予 0
+        # Append 3D filter values for newly added Gaussians.
         if hasattr(self, 'filter_3D'):
             if new_filter is None:
                 new_filter = torch.zeros((new_xyz.shape[0], 1), device="cuda")
@@ -510,7 +507,7 @@ class GaussianModel:
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
         
-        # 提取分裂点对应的原有 filter 赋予新点
+        # Propagate the parent Gaussians' 3D filter values to split points.
         new_filter = self.filter_3D[selected_pts_mask].repeat(N, 1) if hasattr(self, 'filter_3D') else None
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_filter=new_filter)
@@ -532,7 +529,7 @@ class GaussianModel:
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
         
-        # 克隆点直接拷贝原有的 filter 属性
+        # Copy the original 3D filter values to cloned Gaussians.
         new_filter = self.filter_3D[selected_pts_mask] if hasattr(self, 'filter_3D') else None
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_filter=new_filter)
@@ -571,59 +568,57 @@ class GaussianModel:
         
 
     def densify_from_depth_propagation(self, viewpoint_cam, propagated_depth, filter_mask, gt_image):
-        """
-        根据传播的深度信息进行密化 (来自 GaussianPro)
-        """
-        # 1. 坐标变换：从像素坐标+深度反求世界坐标
+        """Add Gaussians by back-projecting propagated depth into world coordinates."""
+        # Back-project pixel coordinates and depth into world coordinates.
         K = viewpoint_cam.K
-        # 获取相机到世界的变换矩阵
+        # Compute the camera-to-world transformation.
         cam2world = viewpoint_cam.world_view_transform.transpose(0, 1).inverse()
 
         height, width = propagated_depth.shape
         y, x = torch.meshgrid(torch.arange(0, height), torch.arange(0, width), indexing='ij')
         
-        # 构建齐次坐标
+        # Construct homogeneous pixel coordinates.
         coordinates = torch.stack([x.to(propagated_depth.device), 
                                   y.to(propagated_depth.device), 
                                   torch.ones_like(propagated_depth)], dim=-1)
         coordinates = coordinates.view(-1, 3).to(K.device).to(torch.float32)
         
-        # 反投影到相机空间
+        # Back-project pixels into camera coordinates.
         coordinates_3D = (K.inverse() @ coordinates.T).T
         coordinates_3D *= propagated_depth.view(-1, 1)
 
-        # 转换到世界坐标系
+        # Transform points into world coordinates.
         world_coordinates_3D = (cam2world[:3, :3] @ coordinates_3D.T).T + cam2world[:3, 3]
 
-        # 2. 降采样处理 (避免内存溢出，GaussianPro 默认 1/8 采样)
+        # Downsample points to reduce the number of propagated Gaussians.
         world_coordinates_3D = world_coordinates_3D.view(height, width, 3)
         world_coordinates_3D_downsampled = world_coordinates_3D[::8, ::8]
         filter_mask_downsampled = filter_mask[::8, ::8]
         gt_image_downsampled = gt_image.permute(1, 2, 0)[::8, ::8]
 
-        # 应用掩码筛选有效点
+        # Select valid points using the propagation mask.
         world_coordinates_3D_downsampled = world_coordinates_3D_downsampled[filter_mask_downsampled]
         color_downsampled = gt_image_downsampled[filter_mask_downsampled]
 
-        # 3. 初始化新增高斯球的属性
+        # Initialize attributes for the new Gaussians.
         fused_point_cloud = world_coordinates_3D_downsampled
         fused_color = RGB2SH(color_downsampled)
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).to(fused_color.device)
         features[:, :3, 0] = fused_color
         
-        # 计算尺度 (Scale): 使用新点与现有云的最近邻距离
+        # Estimate Gaussian scales from nearest-neighbor distances.
         fused_shape = fused_point_cloud.shape[0]
         all_point_cloud = torch.concat([fused_point_cloud, self.get_xyz], dim=0)
         all_dist2 = torch.clamp_min(distCUDA2(all_point_cloud), 0.0000001)
         dist2 = all_dist2[:fused_shape]        
         scales = torch.log(torch.sqrt(dist2))[..., None].repeat(1, 3)
         
-        # 旋转与不透明度初始化
+        # Initialize rotations and opacities.
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
         opacities = inverse_sigmoid(1.0 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
-        # 4. 将新点合入优化器
+        # Append the new Gaussians to the model and optimizer.
         self.densification_postfix(fused_point_cloud, 
                                    features[:,:,0:1].transpose(1, 2).contiguous(), 
                                    features[:,:,1:].transpose(1, 2).contiguous(), 

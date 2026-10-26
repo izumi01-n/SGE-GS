@@ -20,7 +20,6 @@
 
 namespace FORWARD
 {
-    // 1. 修正后的 preprocess 声明
     void preprocess(int P, int D, int M,
         const float* orig_points,
         const glm::vec3* scales,
@@ -44,13 +43,13 @@ namespace FORWARD
         float* cov3Ds,
         float* colors,
         float4* conic_opacity,
-        float4* conic_opacity_raw,      // [新增] 必须加上
+        float4* conic_opacity_raw,
         const dim3 grid,
         uint32_t* tiles_touched,
         bool prefiltered,
-        float* normals);                 // [新增] 必须加上
+        float* normals);
 
-    // 2. 修正后的 render 声明
+
     void render(
         const dim3 grid, dim3 block,
         const uint2* ranges,
@@ -60,16 +59,16 @@ namespace FORWARD
         const float2* points_xy_image,
         const float* colors,
         const float4* conic_opacity,
-        const float4* conic_opacity_raw, // [新增] 必须加上
+        const float4* conic_opacity_raw,
         const float* depths,
-        const float* normals,            // [新增] 传入法线 buffer
+        const float* normals,
         float* final_T,
-        //float* final_T_raw,              // [新增] 对应 forward.cu 包装器的参数名
+        //float* final_T_raw,
         uint32_t* n_contrib,
         const float* bg_color,
         float* out_color,
         float* out_depth,
-        float* out_alpha,                // [修复] 补上了逗号
-        float* out_normal);              // [修复] 补上了结尾括号
+        float* out_alpha,
+        float* out_normal);
 }
 #endif

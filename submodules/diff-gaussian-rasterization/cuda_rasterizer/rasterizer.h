@@ -28,7 +28,6 @@ namespace CudaRasterizer
 			float* projmatrix,
 			bool* present);
 
-		// 找到 static int forward(...)，修改为如下顺序：
 		static int forward(
 			std::function<char* (size_t)> geometryBuffer,
 			std::function<char* (size_t)> binningBuffer,
@@ -52,10 +51,10 @@ namespace CudaRasterizer
     const float* subpixel_offset,
     const bool prefiltered,
     float* out_color,
-    float* out_depth,        // 放到这里
-    float* out_alpha,        // 放到这里
-    float* out_normal,       // 放到这里
-    int* radii = nullptr,    // 带有默认值的参数必须靠后
+    float* out_depth,
+    float* out_alpha,
+    float* out_normal,
+    int* radii = nullptr,
     bool debug = false);
 
 		static void backward(

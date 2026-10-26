@@ -35,9 +35,8 @@ def render(
     (SGE + Geometry/Appearance Decoupled CUDA Rasterizer)
     """
 
-    # ------------------------------------------------------------------
+
     # Screen-space tensor
-    # ------------------------------------------------------------------
     screenspace_points = torch.zeros_like(
         pc.get_xyz,
         dtype=pc.get_xyz.dtype,
@@ -85,10 +84,8 @@ def render(
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-    # ------------------------------------------------------------------
-    # Gaussian attributes
-    # ------------------------------------------------------------------
 
+    # Gaussian attributes
     means3D = pc.get_xyz
     means2D = screenspace_points
 
@@ -100,10 +97,8 @@ def render(
     if pipe.compute_cov3D_python:
         cov3D_precomp = pc.get_covariance(scaling_modifier)
 
-    # ------------------------------------------------------------------
-    # SH color
-    # ------------------------------------------------------------------
 
+    # SH color
     shs = None
     colors_precomp = None
 
@@ -144,10 +139,8 @@ def render(
 
         colors_precomp = override_color
 
-    # ------------------------------------------------------------------
-    # CUDA rasterization
-    # ------------------------------------------------------------------
 
+    # CUDA rasterization
     rendered_image, radii, depth, alpha, normal = rasterizer(
         means3D=means3D,
         means2D=means2D,
@@ -168,10 +161,8 @@ def render(
         "radii": radii,
     }
 
-    # ------------------------------------------------------------------
-    # Optional outputs
-    # ------------------------------------------------------------------
 
+    # Optional outputs
     if return_depth:
         return_dict["render_depth"] = depth
 
