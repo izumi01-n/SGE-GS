@@ -5,6 +5,10 @@ This repository contains the implementation of **Selective Geometric Enhancement
 **Paper:** *Selective Geometric Enhancement for 3D Gaussian Splatting Reconstruction*  
 **Journal:** Signal Processing: Image Communication, 2026, Article 117740  
 **DOI:** [10.1016/j.image.2026.117740](https://doi.org/10.1016/j.image.2026.117740)
+## Method Overview
+
+![SGE-GS method overview](assets/method_overview.png)
+
 
 ## Overview
 
@@ -163,3 +167,7 @@ If you use this work in your research, please cite the paper:
 ## Acknowledgements
 
 This project builds upon prior work on 3D Gaussian Splatting and Mip-Splatting. Please also refer to the original projects for their methods, implementation details, and licenses.
+
+## Results
+
+![Reconstruction comparison](assets/reconstruction_comparison.png)
