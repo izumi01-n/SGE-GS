@@ -166,8 +166,10 @@ If you use this work in your research, please cite the paper:
 
 ## Acknowledgements
 
-This project builds upon prior work on 3D Gaussian Splatting and Mip-Splatting. Please also refer to the original projects for their methods, implementation details, and licenses.
+This project was developed with reference to [3D Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting), [Mip-Splatting](https://github.com/autonomousvision/mip-splatting), and [GaussianPro](https://github.com/kcheng1021/GaussianPro). We thank the authors for their valuable contributions and for making their work publicly available.
+## License
 
+This repository includes code derived from prior work. Please refer to `LICENSE.md` and the relevant upstream licenses for the applicable terms and restrictions. In particular, the original 3D Gaussian Splatting license restricts commercial use without prior explicit permission from the licensors.
 ## Results
 
 ![Reconstruction comparison](assets/reconstruction_comparison.png)
