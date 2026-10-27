@@ -105,32 +105,27 @@ Dataset files are not included in this repository.
 
 ## Training
 
-The following command uses the parameters from the paper's experimental configuration.
+Run `train.py` with the appropriate dataset and output paths. The default configuration can be used for most parameters.
 
-```bash
-python train.py \
-  --source_path data/360_v2/garden \
-  --model_path output/SGE-GS/garden \
-  --iterations 30000 \
-  --dataset free \
-  --densify_grad_threshold 0.0004 \
-  --propagation_interval 200 \
-  --patch_size 36 \
-  --flatten_loss \
-  --depth_loss \
-  --normal_loss \
-  --propagated_iteration_begin 4000 \
-  --propagated_iteration_after 15000 \
-  --normal_iter_start 4000 \
-  --lambda_l1_normal 0.15 \
-  --lambda_depth 0.2 \
-  --lambda_flatten 2.0 \
-  --depth_error_threshold 0.05
-```
+The following settings were used in the paper's experiments:
 
-Replace the example scene path with the path to your own dataset scene. The output model and training artifacts are saved under `--model_path`.
+| Parameter | Value |
+|---|---:|
+| `iterations` | 30000 |
+| `densify_grad_threshold` | 0.0004 |
+| `propagation_interval` | 200 |
+| `patch_size` | 36 |
+| `propagated_iteration_begin` | 4000 |
+| `propagated_iteration_after` | 15000 |
+| `normal_iter_start` | 4000 |
+| `lambda_l1_normal` | 0.15 |
+| `lambda_depth` | 0.2 |
+| `lambda_flatten` | 2.0 |
+| `depth_error_threshold` | 0.05 |
 
-The command above enables normal, depth, and flattening losses and specifies the geometric propagation schedule and loss weights used in the experiments.
+Enable the geometric losses with `--normal_loss`, `--depth_loss`, and `--flatten_loss`.
+
+Set `--source_path` to your dataset scene directory and `--model_path` to the desired output directory. For additional options, run `python train.py --help`.
 
 ## Rendering
 
